@@ -1,0 +1,13 @@
+# Python Analyzer Dependencies
+# Install with: pip install -r requirements.txt
+
+numpy>=1.24.0
+scipy>=1.10.0
+librosa>=0.10.0
+soundfile>=0.12.0
+audioread>=3.0.0
+
+# For future deep learning support (optional, install when needed)
+# torch>=2.0.0
+# torchaudio>=2.0.0
+# tensorflow>=2.12.0
