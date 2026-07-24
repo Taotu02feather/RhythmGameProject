@@ -1,14 +1,27 @@
 #!/usr/bin/env python3
 """
-Open Rhythm Engine - Music Analyzer CLI
+Open Rhythm Engine - 音乐分析器命令行入口
 
-Usage:
-    python run_analyzer.py <audio_file> [options]
+功能:
+  用户运行此脚本，传入一个音乐文件路径，
+  系统自动进行 6 步分析并生成谱面和数据分析文件。
 
-Examples:
-    python run_analyzer.py Songs/mysong.wav
-    python run_analyzer.py Songs/mysong.mp3 --lanes 4 --title "My Song" --artist "Me"
-    python run_analyzer.py Songs/mysong.wav --lanes 6 --difficulty-set
+分析流程:
+  第1步 - 音频加载: 读取 WAV/MP3/FLAC/OGG 文件，转换为单声道 float32 数组
+  第2步 - BPM 检测: 使用 librosa 的 onset 强度 + 自相关算法估计 BPM
+  第3步 - 节拍跟踪: 在 BPM 指导下精确定位每个节拍的时间位置
+  第4步 - 鼓点检测: 使用频谱通量法检测音符起始点
+  第5步 - 特征提取: 提取 MFCC、色度、频谱质心等特征（未来 AI 训练用）
+  第6步 - 结构分析: 使用自相似矩阵分割 intro/verse/chorus 等段落
+
+输出文件:
+  Charts/<歌名>_analysis.json  - 完整音乐分析数据
+  Charts/<歌名>_chart.json      - 自动生成的可玩游戏谱面
+
+使用示例:
+  python run_analyzer.py Songs/mysong.wav
+  python run_analyzer.py Songs/mysong.mp3 --lanes 6 --difficulty-set
+  python run_analyzer.py Songs/mysong.mp3 --title "我的歌" --artist "乐队名"
 """
 
 import sys

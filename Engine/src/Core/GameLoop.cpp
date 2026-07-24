@@ -8,72 +8,104 @@
 
 namespace Ore {
 
+// ============================================================================
+// 构造函数 - 保存引擎指针
+// @param engine: 引擎主控实例指针（用于访问渲染器/输入等子系统）
+// ============================================================================
 GameLoop::GameLoop(Engine* engine)
     : m_engine(engine)
 {
 }
 
+// ============================================================================
+// Run - 启动并运行主游戏循环（阻塞调用）
+//
+// 每帧执行流程:
+//   1. 计算 deltaTime（使用 SDL 高精度性能计数器）
+//   2. 处理 SDL 事件队列（窗口关闭、键盘输入等）
+//   3. 更新输入状态（按键按下/释放检测）
+//   4. 检查退出条件（窗口关闭 或 按键退出）
+//   5. 调用 onUpdate 回调（业务逻辑更新）
+//   6. 调用 onRender 回调（画面渲染）
+//   7. 交换前后缓冲区（SDL_RenderPresent）
+//   8. 重置每帧输入状态（准备下一帧）
+//
+// 防止帧率失控:
+//   - deltaTime 超过 0.1秒时强制截断（防止调试断点后的"死亡螺旋"）
+// ============================================================================
 void GameLoop::Run() {
+    // 获取子系统引用
     auto* renderer = m_engine->GetRenderer();
     auto* input = m_engine->GetInput();
 
+    // ---- 初始化高精度计时器 ----
+    // SDL_GetPerformanceCounter: 获取当前性能计数器值（纳秒级精度）
+    // SDL_GetPerformanceFrequency: 获取计数器频率（每秒计数次数）
     uint64_t lastTime = SDL_GetPerformanceCounter();
     uint64_t perfFreq = SDL_GetPerformanceFrequency();
 
     std::cout << "Game loop started." << std::endl;
 
+    // ---- 主循环 ----
     while (m_engine->IsRunning()) {
-        // Calculate delta time
+
+        // ---------- 1. 计算 deltaTime ----------
+        // deltaTime = (当前计数器 - 上次计数器) / 频率
+        // 结果单位为秒，例如 0.016666... 表示约 60 FPS
         uint64_t currentTime = SDL_GetPerformanceCounter();
         m_deltaTime = static_cast<double>(currentTime - lastTime) / static_cast<double>(perfFreq);
         lastTime = currentTime;
         m_frameCount++;
 
-        // Cap delta time to avoid spiral of death
+        // 防止"死亡螺旋"：当帧间隔过大时（如从断点恢复），强制截断
+        // 避免物理计算爆炸（如子弹穿透等问题）
         if (m_deltaTime > 0.1) {
             m_deltaTime = 0.1;
         }
 
-        // Process all SDL events
+        // ---------- 2. 处理 SDL 事件 -------
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
             switch (event.type) {
-                case SDL_QUIT:
+                case SDL_QUIT:           // 用户点击窗口关闭按钮
                     m_engine->Quit();
                     break;
-                case SDL_KEYDOWN:
-                case SDL_KEYUP:
-                    // Handled by Input::Update below
+                case SDL_KEYDOWN:        // 按键按下（由 Input::Update 统一处理）
+                case SDL_KEYUP:          // 按键释放
                     break;
                 default:
                     break;
             }
         }
 
-        // Update input state
+        // ---------- 3. 更新输入状态 ----------
+        // 更新键盘状态，检测按键按下/释放的边缘触发
         input->Update();
 
-        // Check quit request from input (e.g., Escape key)
+        // ---------- 4. 检查退出条件 ----------
+        // 检测到退出请求（如 ESC 键被按下）
         if (input->IsQuitRequested()) {
             m_engine->Quit();
         }
 
-        // Custom update callback
+        // ---------- 5. 逻辑更新回调 ----------
+        // 由外部（main.cpp）注入的业务逻辑
         if (m_onUpdate) {
             m_onUpdate(m_deltaTime);
         }
 
-        // Render
-        renderer->BeginFrame();
-        renderer->ClearScreen(20, 20, 30);  // Dark background
+        // ---------- 6. 渲染 ----------
+        renderer->BeginFrame();                               // 准备绘制
+        renderer->ClearScreen(20, 20, 30);                    // 清屏为深色背景
 
         if (m_onRender) {
-            m_onRender(m_deltaTime);
+            m_onRender(m_deltaTime);                          // 业务渲染回调
         }
 
-        renderer->EndFrame();
+        renderer->EndFrame();                                 // 交换缓冲区
 
-        // Reset per-frame input state
+        // ---------- 7. 重置输入状态 ----------
+        // 清除本帧的按下/释放标志，为下一帧做准备
         input->ResetFrameState();
     }
 

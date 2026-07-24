@@ -9,17 +9,25 @@
 
 namespace Ore {
 
+// 构造函数 - 保存资源管理器指针用于路径解析
 ChartLoader::ChartLoader(ResourceManager* resourceManager)
     : m_resourceManager(resourceManager)
 {
 }
 
 // ============================================================================
-// Minimal JSON Parser
-// Since we want zero third-party JSON dependencies in the engine,
-// we implement a lightweight parser that handles our chart format.
+// 内置轻量 JSON 解析器
+//
+// 为什么自己写解析器而不使用 nlohmann/json？
+//   - 谱面格式是我们自己定义的，结构简单可控
+//   - 避免额外第三方依赖，降低编译复杂度
+//   - 3 个辅助函数（SkipWhitespace, ReadJsonString, ReadJsonNumber）
+//     足够解析 chart JSON 中的所有字段
 // ============================================================================
 
+// SkipWhitespace - 跳过 JSON 中的空白字符和逗号分隔符
+// @param json: JSON 文本
+// @param pos: 当前解析位置（会被更新，指向下一个非空白字符）
 void ChartLoader::SkipWhitespace(const std::string& json, size_t& pos) {
     while (pos < json.size() && (json[pos] == ' ' || json[pos] == '\t' ||
            json[pos] == '\n' || json[pos] == '\r' || json[pos] == ',')) {
@@ -27,20 +35,25 @@ void ChartLoader::SkipWhitespace(const std::string& json, size_t& pos) {
     }
 }
 
+// ReadJsonString - 读取双引号包围的 JSON 字符串，支持转义字符
+// @param json: JSON 文本
+// @param pos: 解析起始位置（必须指向开头的 '"'）
+// @return 解码后的 C++ 字符串
+// 支持转义: \", \\, \n, \t
 std::string ChartLoader::ReadJsonString(const std::string& json, size_t& pos) {
     SkipWhitespace(json, pos);
     if (pos >= json.size() || json[pos] != '"') return "";
-    ++pos; // skip opening quote
+    ++pos; // 跳过开头双引号
 
     std::string result;
     while (pos < json.size() && json[pos] != '"') {
         if (json[pos] == '\\' && pos + 1 < json.size()) {
             ++pos;
             switch (json[pos]) {
-                case '"': result += '"'; break;
-                case '\\': result += '\\'; break;
-                case 'n': result += '\n'; break;
-                case 't': result += '\t'; break;
+                case '"': result += '"'; break;   // 转义双引号
+                case '\\': result += '\\'; break;  // 转义反斜杠
+                case 'n': result += '\n'; break;   // 换行符
+                case 't': result += '\t'; break;   // 制表符
                 default: result += json[pos]; break;
             }
         } else {
@@ -48,10 +61,15 @@ std::string ChartLoader::ReadJsonString(const std::string& json, size_t& pos) {
         }
         ++pos;
     }
-    if (pos < json.size()) ++pos; // skip closing quote
+    if (pos < json.size()) ++pos; // 跳过结尾双引号
     return result;
 }
 
+// ReadJsonNumber - 读取 JSON 数值（整数或浮点数）
+// @param json: JSON 文本
+// @param pos: 解析起始位置
+// @return 解析后的 double 值
+// 支持: 负数、小数点、科学计数法（e/E）
 double ChartLoader::ReadJsonNumber(const std::string& json, size_t& pos) {
     SkipWhitespace(json, pos);
     std::string numStr;
