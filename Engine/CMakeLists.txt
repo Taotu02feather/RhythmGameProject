@@ -39,5 +39,5 @@ add_executable(OpenRhythmEngine
     ${CMAKE_SOURCE_DIR}/main.cpp   # main.cpp 在项目根目录
 )
 
-# 链接 Engine 静态库
-target_link_libraries(OpenRhythmEngine PRIVATE Engine)
+# 链接 Engine 静态库和 SDL2 main（Windows 上 SDL 需要 SDL2main 处理入口点）
+target_link_libraries(OpenRhythmEngine PRIVATE Engine SDL2::SDL2main)

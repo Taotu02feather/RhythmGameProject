@@ -53,6 +53,10 @@ public:
     // @param path: 文件路径（绝对路径）
     bool FileExists(const std::string& path) const;
 
+    // GetAssetRoot - 获取资源根目录路径
+    // @return 当前资源根目录的绝对路径
+    const std::string& GetAssetRoot() const { return m_assetRoot; }
+
 private:
     std::string m_assetRoot;  // 资源根目录的绝对路径
 };

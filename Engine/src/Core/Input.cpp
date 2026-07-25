@@ -168,19 +168,18 @@ void Input::LoadDefaultBindings() {
     BindKey(SDL_SCANCODE_RETURN, GameAction::Confirm);     // 回车 = 确认
     BindKey(SDL_SCANCODE_BACKSPACE, GameAction::Cancel);    // 退格 = 取消
 
-    // ---- 轨道按键（DFJK 布局） ----
-    BindKey(SDL_SCANCODE_D, GameAction::Lane0);             // D = 轨道0
-    BindKey(SDL_SCANCODE_F, GameAction::Lane1);             // F = 轨道1
-    BindKey(SDL_SCANCODE_J, GameAction::Lane2);             // J = 轨道2
-    BindKey(SDL_SCANCODE_K, GameAction::Lane3);             // K = 轨道3
+    // ---- 轨道按键（A-L 行布局，从左到右依次为轨道 0-7） ----
+    // 使用键盘第三行（左手区到右手区）的连续 8 个键
+    BindKey(SDL_SCANCODE_A, GameAction::Lane0);             // A = 轨道0
+    BindKey(SDL_SCANCODE_S, GameAction::Lane1);             // S = 轨道1
+    BindKey(SDL_SCANCODE_D, GameAction::Lane2);             // D = 轨道2
+    BindKey(SDL_SCANCODE_F, GameAction::Lane3);             // F = 轨道3
+    BindKey(SDL_SCANCODE_G, GameAction::Lane4);             // G = 轨道4
+    BindKey(SDL_SCANCODE_H, GameAction::Lane5);             // H = 轨道5
+    BindKey(SDL_SCANCODE_J, GameAction::Lane6);             // J = 轨道6
+    BindKey(SDL_SCANCODE_K, GameAction::Lane7);             // K = 轨道7
 
-    // ---- 扩展轨道（6K/7K/8K 模式） ----
-    BindKey(SDL_SCANCODE_SPACE, GameAction::Lane4);         // 空格 = 轨道4
-    BindKey(SDL_SCANCODE_E, GameAction::Lane5);             // E = 轨道5
-    BindKey(SDL_SCANCODE_I, GameAction::Lane6);             // I = 轨道6
-    BindKey(SDL_SCANCODE_R, GameAction::Lane7);             // R = 轨道7
-
-    std::cout << "Default input bindings loaded (DFJK layout)." << std::endl;
+    std::cout << "Default input bindings loaded (A-K layout)." << std::endl;
 }
 
 } // namespace Ore

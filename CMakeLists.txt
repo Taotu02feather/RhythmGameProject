@@ -9,14 +9,22 @@ cmake_minimum_required(VERSION 3.16)
 project(OpenRhythmEngine VERSION 0.1.0 LANGUAGES CXX)
 
 # ---------- C++ 标准 ----------
-# 强制使用 C++17 标准（用于 std::filesystem, std::optional 等特性）
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_EXTENSIONS OFF)  # 禁用编译器扩展，确保代码可移植性
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+# ---------- MSVC 编译选项 ----------
+# /utf-8: 源码和执行字符集均为 UTF-8，解决中文注释/字符串乱码
+if (MSVC)
+    add_compile_options("/utf-8")
+endif()
 
 # ---------- 输出目录 ----------
-# 将所有可执行文件输出到 build/bin/ 目录下
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+# 将可执行文件输出到项目根目录的 bin/ 目录下（与 README.md 同级）
+# 同时覆盖 Debug/Release 子目录配置，确保所有构建类型输出到同一位置
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/bin)
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE ${CMAKE_SOURCE_DIR}/bin)
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_DEBUG ${CMAKE_SOURCE_DIR}/bin)
 
 # ---------- 第三方依赖 ----------
 # SDL2: 窗口创建、事件处理、渲染

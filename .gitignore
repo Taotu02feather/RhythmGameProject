@@ -384,6 +384,9 @@ Saved/
 # C / C++ Build
 ######################################
 
+# 引擎编译输出
+bin/
+
 cmake-build-*/
 CMakeFiles/
 CMakeCache.txt
