@@ -26,11 +26,12 @@ target_include_directories(Engine PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
-# 链接 SDL2 和 SDL2_mixer
-# PUBLIC 意味着链接 Engine 的目标也会自动链接这些库
+# 链接 SDL2、SDL2_mixer 和 SDL2_ttf
+find_package(SDL2_ttf CONFIG REQUIRED)
 target_link_libraries(Engine PUBLIC
     SDL2::SDL2
     SDL2_mixer::SDL2_mixer
+    $<IF:$<TARGET_EXISTS:SDL2_ttf::SDL2_ttf>,SDL2_ttf::SDL2_ttf,SDL2_ttf::SDL2_ttf-static>
 )
 
 # ---------- 可执行文件目标 ----------

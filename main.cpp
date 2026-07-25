@@ -495,4 +495,107 @@ int main(int argc, char* argv[]) {
     engine.Shutdown();
     std::cout << "Open Rhythm Engine exited cleanly." << std::endl;
     return 0;
+                {
+                    int x = leftCol;
+                    int boxW = 340;
+                    bool sel = (settingSelection == SETTING_BACK_IDX);
+                    DrawSettingOption(r, x, y + 10, boxW, rowH, 80, 50, 50, sel);
+                }
+
+                // 右侧帮助文字区域
+                r->DrawRect(rightCol, 100, 550, 300, 22, 22, 40, 150);
+                r->DrawRect(rightCol + 10, 110, 80, 30, 60, 60, 100, 200);
+                // 帮助: ↑↓ 导航, ←→ 切换轨道数, Enter 修改键位, Backspace 返回
+                r->DrawRect(winW - 100, winH - 30, 80, 25, 200, 150, 50, 200);
+
+                break;
+            }
+
+            // ====================================================
+            // 游玩页面渲染
+            // ====================================================
+            case Page::Play: {
+                r->ClearScreen(18, 18, 28);
+
+                int lc = keyCache.laneCount;
+                const int laneWidth = 90;
+                const int laneHeight = 220;
+                const int laneStartY = 440;
+                const int judgeLineY = laneStartY - 2;
+                const int startX = centerX - (lc * laneWidth) / 2;
+
+                // 顶部栏
+                r->DrawRect(0, 0, winW, 70, 12, 12, 22);
+
+                // 绘制轨道
+                for (int i = 0; i < lc; ++i) {
+                    int x = startX + i * laneWidth;
+                    bool flashed = (elapsedTime - lanePressTime[i]) < pressFlashDuration;
+                    Ore::GameAction action = static_cast<Ore::GameAction>(
+                        static_cast<int>(Ore::GameAction::Lane0) + i);
+                    bool held = input->IsActionDown(action);
+
+                    if (flashed || held) {
+                        // 按下高亮
+                        r->DrawRect(x, laneStartY, laneWidth - 4, laneHeight, 80, 60, 140);
+                        r->DrawRect(x, laneStartY, laneWidth - 4, 6, 150, 120, 255);
+                        r->DrawRect(x, laneStartY + laneHeight - 6, laneWidth - 4, 6, 150, 120, 255);
+                        r->DrawRect(x + 4, laneStartY + 6, laneWidth - 12, laneHeight - 12,
+                                    30, 20, 60, 120);
+                    } else {
+                        r->DrawRect(x, laneStartY, laneWidth - 4, laneHeight, 35, 35, 55);
+                        r->DrawRect(x, laneStartY, laneWidth - 4, 2, 60, 60, 90);
+                    }
+                    // 分隔线
+                    r->DrawRect(x + laneWidth - 4, laneStartY, 2, laneHeight, 50, 50, 75);
+
+                    // 按键标签
+                    int labelY = laneStartY + laneHeight + 8;
+                    int labelW = 60;
+                    int labelH = 30;
+                    int labelX = x + (laneWidth - 4 - labelW) / 2;
+                    if (flashed || held) {
+                        r->DrawRect(labelX, labelY, labelW, labelH, 120, 100, 200, 220);
+                    } else {
+                        r->DrawRect(labelX, labelY, labelW, labelH, 45, 45, 70, 180);
+                    }
+                }
+
+                // 判定线
+                r->DrawRect(0, judgeLineY - 1, winW, 5, 255, 200, 60, 180);
+                r->DrawRect(0, judgeLineY + 4, winW, 2, 255, 100, 30, 80);
+
+                // 底部栏
+                r->DrawRect(0, winH - 45, winW, 45, 8, 8, 18, 200);
+
+                // 谱面信息
+                if (demoChart) {
+                    int infoX = winW - 280;
+                    r->DrawRect(infoX, 85, 265, 120, 15, 15, 30, 200);
+                }
+                break;
+            }
+
+            default: break;
+        }
+    });
+
+    // ======== 输出启动信息 ========
+    std::cout << "\n========================================" << std::endl;
+    std::cout << "  引擎已启动!" << std::endl;
+    std::cout << "  默认键位 (A-L行):";
+    for (int i = 0; i < 8; ++i) {
+        std::cout << " " << ScancodeToName(keyCache.laneKeys[i]);
+    }
+    std::cout << std::endl;
+    std::cout << "========================================" << std::endl;
+
+    // ======== Run ========
+    engine.Run();
+
+    // ======== Shutdown ========
+    demoChart.reset();
+    engine.Shutdown();
+    std::cout << "Open Rhythm Engine exited cleanly." << std::endl;
+    return 0;
 }
