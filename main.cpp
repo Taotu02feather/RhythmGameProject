@@ -1,17 +1,7 @@
-/**
- * Open Rhythm Engine — Startup (v0.2.0-dev)
- * ==========================================
- *
- * Pages:
- *   1. Main Menu — Play / Settings / Quit
- *   2. Settings — Lane count 2K-8K + key rebinding (default A-S-D-F-G-H-J-K)
- *   3. Play — Loads demo chart, keyboard input visualization
- *
- * Controls:
- *   Menu:   UP/DOWN arrows to select, ENTER to confirm, ESC to quit
- *   Settings: LEFT/RIGHT to change lane count, ENTER on key slot to rebind
- *             Press any A-Z key to assign, BACKSPACE to return
- *   Play:    Press lane keys to play, ESC to return to main menu
+﻿/**
+ * Open Rhythm Engine v0.2.0
+ * Font: SDL_ttf (TTF_Init!)  Chart: .mdc (Majdata-style)
+ * Sound: sine-wave beeps per lane (do-re-mi-fa-so-la-ti-do)
  */
 
 #include "Core/Engine.h"
@@ -22,580 +12,122 @@
 #include "Chart/ChartTypes.h"
 #include "Gameplay/Judge.h"
 #include "Resource/ResourceManager.h"
-
+#include <SDL_ttf.h>
+#include <SDL_mixer.h>
 #include <iostream>
 #include <memory>
 #include <filesystem>
 #include <algorithm>
 #include <cstring>
-
+#include <vector>
+#include <cmath>
+#include <sstream>
+#include <fstream>
+#include <cstdlib>
 #ifdef _WIN32
 #define NOMINMAX
 #include <windows.h>
 #endif
 
-// ============================================================================
-// Page state machine
-// ============================================================================
-enum class Page { MainMenu, Settings, Play, Quit };
+namespace fs=std::filesystem;
+enum class Page{MainMenu,Settings,ChartSelect,Play,Results,Quit};
+static bool ttfOk=false;
+static TTF_Font* ttfFont=nullptr;
 
-// ============================================================================
-// Scancode -> readable key name
-// ============================================================================
-static const char* ScancodeToName(SDL_Scancode sc) {
-    switch (sc) {
-        case SDL_SCANCODE_A: return "A"; case SDL_SCANCODE_B: return "B";
-        case SDL_SCANCODE_C: return "C"; case SDL_SCANCODE_D: return "D";
-        case SDL_SCANCODE_E: return "E"; case SDL_SCANCODE_F: return "F";
-        case SDL_SCANCODE_G: return "G"; case SDL_SCANCODE_H: return "H";
-        case SDL_SCANCODE_I: return "I"; case SDL_SCANCODE_J: return "J";
-        case SDL_SCANCODE_K: return "K"; case SDL_SCANCODE_L: return "L";
-        case SDL_SCANCODE_M: return "M"; case SDL_SCANCODE_N: return "N";
-        case SDL_SCANCODE_O: return "O"; case SDL_SCANCODE_P: return "P";
-        case SDL_SCANCODE_Q: return "Q"; case SDL_SCANCODE_R: return "R";
-        case SDL_SCANCODE_S: return "S"; case SDL_SCANCODE_T: return "T";
-        case SDL_SCANCODE_U: return "U"; case SDL_SCANCODE_V: return "V";
-        case SDL_SCANCODE_W: return "W"; case SDL_SCANCODE_X: return "X";
-        case SDL_SCANCODE_Y: return "Y"; case SDL_SCANCODE_Z: return "Z";
-        case SDL_SCANCODE_SPACE:  return "Spc";
-        case SDL_SCANCODE_RETURN: return "Enter";
-        case SDL_SCANCODE_ESCAPE: return "ESC";
-        case SDL_SCANCODE_BACKSPACE: return "Bksp";
-        case SDL_SCANCODE_UP:    return "Up";
-        case SDL_SCANCODE_DOWN:  return "Dn";
-        case SDL_SCANCODE_LEFT:  return "Lt";
-        case SDL_SCANCODE_RIGHT: return "Rt";
-        default: return "?";
-    }
+static const char* KN(SDL_Scancode s){switch(s){case SDL_SCANCODE_A:return"A";case SDL_SCANCODE_B:return"B";
+case SDL_SCANCODE_C:return"C";case SDL_SCANCODE_D:return"D";case SDL_SCANCODE_E:return"E";case SDL_SCANCODE_F:return"F";
+case SDL_SCANCODE_G:return"G";case SDL_SCANCODE_H:return"H";case SDL_SCANCODE_I:return"I";case SDL_SCANCODE_J:return"J";
+case SDL_SCANCODE_K:return"K";case SDL_SCANCODE_L:return"L";case SDL_SCANCODE_M:return"M";case SDL_SCANCODE_N:return"N";
+case SDL_SCANCODE_O:return"O";case SDL_SCANCODE_P:return"P";case SDL_SCANCODE_Q:return"Q";case SDL_SCANCODE_R:return"R";
+case SDL_SCANCODE_S:return"S";case SDL_SCANCODE_T:return"T";case SDL_SCANCODE_U:return"U";case SDL_SCANCODE_V:return"V";
+case SDL_SCANCODE_W:return"W";case SDL_SCANCODE_X:return"X";case SDL_SCANCODE_Y:return"Y";case SDL_SCANCODE_Z:return"Z";
+default:return"?";}}
+
+struct KB{SDL_Scancode k[8];int n=4;void D(){SDL_Scancode d[8]={SDL_SCANCODE_A,SDL_SCANCODE_S,SDL_SCANCODE_D,SDL_SCANCODE_F,SDL_SCANCODE_G,SDL_SCANCODE_H,SDL_SCANCODE_J,SDL_SCANCODE_K};for(int i=0;i<8;++i)k[i]=d[i];n=4;}int F(SDL_Scancode s)const{for(int i=0;i<n;++i)if(k[i]==s)return i;return-1;}};
+static void AK(Ore::Input* io,const KB& kb){io->LoadDefaultBindings();for(int i=0;i<kb.n;++i)io->BindKey(kb.k[i],static_cast<Ore::GameAction>(static_cast<int>(Ore::GameAction::Lane0)+i));}
+
+static void DTTF(Ore::Renderer* rdr,const std::string& t,int x,int y,uint8_t cr=255,uint8_t cg=255,uint8_t cb=255,uint8_t ca=255){
+    if(ttfFont){SDL_Color c={cr,cg,cb,ca};SDL_Surface*s=TTF_RenderUTF8_Blended(ttfFont,t.c_str(),c);if(s){SDL_Texture* tx=SDL_CreateTextureFromSurface(rdr->GetSDLRenderer(),s);SDL_Rect dst={x,y,s->w,s->h};SDL_RenderCopy(rdr->GetSDLRenderer(),tx,nullptr,&dst);SDL_DestroyTexture(tx);SDL_FreeSurface(s);}}
+    else rdr->DrawPixelText(t,x,y,cr,cg,cb,ca,2);
 }
+static void DT(Ore::Renderer*r,const std::string& t,int x,int y,uint8_t cr=255,uint8_t cg=255,uint8_t cb=255,uint8_t ca=255){DTTF(r,t,x,y,cr,cg,cb,ca);}
 
-// ============================================================================
-// Key binding cache
-// ============================================================================
-struct KeyBindingCache {
-    SDL_Scancode laneKeys[8];
-    int laneCount = 4;
+static const char* JS(Ore::Judgment j){switch(j){case Ore::Judgment::Perfect:return"Perfect";case Ore::Judgment::Great:return"Great";case Ore::Judgment::Good:return"Good";case Ore::Judgment::Miss:return"Miss";default:return"";}}
 
-    void SetDefaults() {
-        SDL_Scancode defaults[8] = {
-            SDL_SCANCODE_A, SDL_SCANCODE_S, SDL_SCANCODE_D, SDL_SCANCODE_F,
-            SDL_SCANCODE_G, SDL_SCANCODE_H, SDL_SCANCODE_J, SDL_SCANCODE_K
-        };
-        for (int i = 0; i < 8; ++i) laneKeys[i] = defaults[i];
-        laneCount = 4;
-    }
+static std::vector<std::string> SC(){std::vector<std::string> v;if(!fs::exists("Charts"))return v;for(auto& e:fs::directory_iterator("Charts")){auto p=e.path().extension().string();if(p==".mdc"||p==".json")v.push_back(e.path().filename().string());}std::sort(v.begin(),v.end());return v;}
 
-    int FindLaneByScancode(SDL_Scancode sc) const {
-        for (int i = 0; i < laneCount; ++i)
-            if (laneKeys[i] == sc) return i;
-        return -1;
-    }
-};
-
-// ============================================================================
-// Apply bindings to Input system
-// ============================================================================
-static void ApplyKeyBindings(Ore::Input* input, const KeyBindingCache& cache) {
-    input->LoadDefaultBindings();
-    for (int i = 0; i < cache.laneCount; ++i) {
-        Ore::GameAction action = static_cast<Ore::GameAction>(
-            static_cast<int>(Ore::GameAction::Lane0) + i);
-        input->BindKey(cache.laneKeys[i], action);
-    }
+static std::unique_ptr<Ore::Chart> ParseMdc(const std::string& path){
+    std::ifstream f(path);if(!f.is_open())return nullptr;
+    auto c=std::make_unique<Ore::Chart>();std::string ln;double bpm=120;int div=4;double step=60.0/bpm/div;double ct=0;bool first=true;int mL=0;
+    auto AN=[&](double tm,int tr,int wt,Ore::NoteType ty,double dur=0){if(tr<1||tr>4)return;Ore::ChartNote n;n.timestamp=tm;n.lane=tr-1;n.type=ty;n.duration=dur;n.extras["weight"]=std::to_string(wt);c->notes.push_back(n);if(tr>mL)mL=tr;};
+    while(std::getline(f,ln)){size_t s=ln.find_first_not_of(" \t\r\n");if(s==std::string::npos||ln[s]=='#')continue;ln=ln.substr(s);
+        if(first&&ln[0]=='('&&ln.find("){")!=std::string::npos){size_t p1=ln.find(')'),p2=ln.find('{'),p3=ln.find('}');if(p1!=std::string::npos&&p2!=std::string::npos&&p3!=std::string::npos){bpm=std::stod(ln.substr(1,p1-1));div=std::stoi(ln.substr(p2+1,p3-p2-1));step=60.0/bpm/div;}first=false;continue;}
+        if(ln[0]=='('&&ln.find("BPM=")!=std::string::npos){size_t eq=ln.find('='),cl=ln.find(')');if(eq!=std::string::npos&&cl!=std::string::npos)bpm=std::stod(ln.substr(eq+1,cl-eq-1));step=60.0/bpm/div;continue;}first=false;
+        if(ln[0]=='@'){size_t cm=ln.find(',');std::string ats=ln.substr(1,cm-1);try{ct=std::stod(ats);}catch(...){}if(cm!=std::string::npos)ln=ln.substr(cm+1);else continue;}
+        std::vector<std::string> toks;std::string cur;for(size_t i=0;i<=ln.size();++i){if(i==ln.size()||ln[i]==','){toks.push_back(cur);cur.clear();}else cur+=ln[i];}
+        for(auto& tok:toks){if(tok.empty()){ct+=step;continue;}
+            if(tok.find('/')!=std::string::npos){std::string ts=tok;size_t pos=0;while(pos<ts.size()){size_t nxt=ts.find('/',pos);if(nxt==std::string::npos)nxt=ts.size();int tt=0;try{tt=std::stoi(ts.substr(pos,nxt-pos));}catch(...){pos=nxt+1;continue;}if(tt>=1&&tt<=4)AN(ct,tt,2,Ore::NoteType::Tap,0);pos=nxt+1;}ct+=step;continue;}
+            int tr=tok[0]-'0';if(tr<1||tr>4){ct+=step;continue;}int sc=1;bool isH=false;double hd=0;
+            if(tok.find('!')!=std::string::npos)sc=3;
+            size_t hp=tok.find('h');if(hp!=std::string::npos){size_t lb=tok.find('[',hp),rb=tok.find(']',hp);if(lb!=std::string::npos&&rb!=std::string::npos){std::string ins=tok.substr(lb+1,rb-lb-1);size_t col=ins.find(':');double num=1,den=4;if(col!=std::string::npos){num=std::stod(ins.substr(0,col));den=std::stod(ins.substr(col+1));}hd=(num/den)*(60.0/bpm);isH=true;sc=2;}}
+            AN(ct,tr,sc,isH?Ore::NoteType::Hold:Ore::NoteType::Tap,hd);ct+=step;}}
+    c->metadata.title=fs::path(path).stem().string();c->metadata.artist="ORE";c->laneCount=mL>0?mL:4;c->bpmChanges.push_back({0.0,bpm});c->SortNotes();return c;
 }
-
-// ============================================================================
-// main()
-// ============================================================================
-int main(int argc, char* argv[]) {
-    // Set console to UTF-8 on Windows
-#ifdef _WIN32
-    SetConsoleOutputCP(CP_UTF8);
-    SetConsoleCP(CP_UTF8);
-#endif
-
-    std::cout << "========================================" << std::endl;
-    std::cout << "  Open Rhythm Engine v0.1.0" << std::endl;
-    std::cout << "========================================" << std::endl;
-
-    // --- Auto-detect project root ---
-    namespace fs = std::filesystem;
-    fs::path exePath = fs::current_path();
-    bool foundRoot = false;
-    std::string searchRel[] = { ".", "..", "../.." };
-    for (const auto& rel : searchRel) {
-        fs::path cand = exePath / rel;
-        if (fs::exists(cand / "Charts" / "demo_4k_easy.json")) {
-            exePath = fs::absolute(cand);
-            foundRoot = true;
-            break;
-        }
-    }
-    if (!foundRoot) exePath = fs::current_path();
-    std::cout << "[Info] Project root: " << exePath.string() << std::endl;
-    fs::current_path(exePath);
-
-    // --- Engine init ---
-    Ore::EngineConfig config;
-    config.windowTitle = "Open Rhythm Engine v0.1.0";
-    config.windowWidth = 1280;
-    config.windowHeight = 720;
-
-    Ore::Engine engine(config);
-    if (!engine.Initialize()) {
-        std::cerr << "Failed to initialize engine. Exiting." << std::endl;
-        return -1;
-    }
-    engine.GetResourceManager()->SetAssetRoot(exePath.string());
-
-    auto* renderer = engine.GetRenderer();
-    auto* input = engine.GetInput();
-    auto* chartLoader = engine.GetChartLoader();
-
-    // --- State ---
-    Page currentPage = Page::MainMenu;
-    Page nextPage = Page::MainMenu;
-    KeyBindingCache keyCache;
-    keyCache.SetDefaults();
-
-    int menuSel = 0;
-    const int MENU_ITEMS = 3;
-
-    int settingSel = 0;
-    const int SETTING_LANE_IDX = 0;
-    const int SETTING_KEY_START = 1;
-    int SETTING_BACK_IDX = 1;
-    bool waitingForKey = false;
-    int waitingLane = -1;
-
-    std::unique_ptr<Ore::Chart> demoChart;
-    double lanePress[8] = {-10,-10,-10,-10,-10,-10,-10,-10};
-    double elapsed = 0.0;
-    const double flashDur = 0.15;
-    double pageSwTime = 0.0;
-    double totalT = 0.0;
-
-    ApplyKeyBindings(input, keyCache);
-
-    // ======================== UPDATE ========================
-    engine.GetGameLoop()->SetOnUpdate([&](double dt) {
-        totalT += dt;
-
-        // ESC handling
-        if (input->IsActionPressed(Ore::GameAction::Pause)) {
-            if (totalT - pageSwTime > 0.3) {
-                switch (currentPage) {
-                    case Page::MainMenu: nextPage = Page::Quit; break;
-                    case Page::Settings:
-                        nextPage = Page::MainMenu; pageSwTime = totalT; break;
-                    case Page::Play:
-                        nextPage = Page::MainMenu; pageSwTime = totalT; break;
-                    default: break;
-                }
-            }
-        }
-
-        bool confirm = input->IsActionPressed(Ore::GameAction::Confirm) ||
-                       input->IsKeyPressed(SDL_SCANCODE_RETURN);
-        bool protect = (totalT - pageSwTime) > 0.25;
-
-        switch (currentPage) {
-
-        // --- MAIN MENU ---
-        case Page::MainMenu: {
-            if (input->IsKeyPressed(SDL_SCANCODE_UP))
-                menuSel = (menuSel - 1 + MENU_ITEMS) % MENU_ITEMS;
-            if (input->IsKeyPressed(SDL_SCANCODE_DOWN))
-                menuSel = (menuSel + 1) % MENU_ITEMS;
-            if (confirm && protect) {
-                pageSwTime = totalT;
-                if (menuSel == 0) {
-                    demoChart = chartLoader->LoadChart("Charts/demo_4k_easy.json");
-                    if (demoChart) {
-                        keyCache.laneCount = demoChart->laneCount;
-                        ApplyKeyBindings(input, keyCache);
-                    }
-                    nextPage = Page::Play;
-                } else if (menuSel == 1) {
-                    settingSel = 0; waitingForKey = false; nextPage = Page::Settings;
-                } else {
-                    nextPage = Page::Quit;
-                }
-            }
-            break;
-        }
-
-        // --- SETTINGS ---
-        case Page::Settings: {
-            if (waitingForKey) {
-                // Wait for a key press (A-Z only)
-                for (int k = SDL_SCANCODE_A; k <= SDL_SCANCODE_Z; ++k) {
-                    if (input->IsKeyPressed(static_cast<SDL_Scancode>(k))) {
-                        SDL_Scancode ns = static_cast<SDL_Scancode>(k);
-                        int occ = keyCache.FindLaneByScancode(ns);
-                        if (occ >= 0 && occ != waitingLane)
-                            keyCache.laneKeys[occ] = keyCache.laneKeys[waitingLane];
-                        keyCache.laneKeys[waitingLane] = ns;
-                        ApplyKeyBindings(input, keyCache);
-                        waitingForKey = false; waitingLane = -1;
-                        std::cout << "[Settings] Lane " << waitingLane
-                                  << " -> " << ScancodeToName(ns) << std::endl;
-                        break;
-                    }
-                }
-                if (input->IsKeyPressed(SDL_SCANCODE_ESCAPE))
-                    { waitingForKey = false; waitingLane = -1; }
-                break;
-            }
-
-            int maxS = 1 + keyCache.laneCount + 1;
-            SETTING_BACK_IDX = maxS - 1;
-
-            if (input->IsKeyPressed(SDL_SCANCODE_UP))
-                settingSel = (settingSel - 1 + maxS) % maxS;
-            if (input->IsKeyPressed(SDL_SCANCODE_DOWN))
-                settingSel = (settingSel + 1) % maxS;
-
-            if (settingSel == SETTING_LANE_IDX) {
-                if (input->IsKeyPressed(SDL_SCANCODE_LEFT)) {
-                    keyCache.laneCount = std::max(2, keyCache.laneCount - 1);
-                    ApplyKeyBindings(input, keyCache);
-                }
-                if (input->IsKeyPressed(SDL_SCANCODE_RIGHT)) {
-                    keyCache.laneCount = std::min(8, keyCache.laneCount + 1);
-                    ApplyKeyBindings(input, keyCache);
-                }
-            }
-
-            if (confirm && protect) {
-                if (settingSel == SETTING_BACK_IDX) {
-                    nextPage = Page::MainMenu; pageSwTime = totalT;
-                } else if (settingSel >= SETTING_KEY_START &&
-                           settingSel < SETTING_KEY_START + keyCache.laneCount) {
-                    waitingForKey = true;
-                    waitingLane = settingSel - SETTING_KEY_START;
-                    std::cout << "[Settings] Waiting for key for lane " << waitingLane << "..." << std::endl;
-                }
-            }
-
-            if (input->IsKeyPressed(SDL_SCANCODE_BACKSPACE) && protect) {
-                nextPage = Page::MainMenu; pageSwTime = totalT;
-            }
-            break;
-        }
-
-        // --- PLAY ---
-        case Page::Play: {
-            elapsed += dt;
-            int lc = keyCache.laneCount;
-            for (int i = 0; i < lc; ++i) {
-                Ore::GameAction a = static_cast<Ore::GameAction>(
-                    static_cast<int>(Ore::GameAction::Lane0) + i);
-                if (input->IsActionPressed(a)) {
-                    lanePress[i] = elapsed;
-                    std::cout << "[Play] Lane " << i << " (" << ScancodeToName(keyCache.laneKeys[i]) << ") hit!" << std::endl;
-                }
-            }
-            break;
-        }
-        default: break;
-        }
-    });
-
-    // ======================== RENDER ========================
-    engine.GetGameLoop()->SetOnRender([&](double dt) {
-        Ore::Renderer* r = renderer;
-        const int W = config.windowWidth;
-        const int H = config.windowHeight;
-        const int CX = W / 2;
-
-        if (nextPage != currentPage) {
-            currentPage = nextPage;
-            if (currentPage == Page::Play) elapsed = 0.0;
-            if (currentPage == Page::Quit) engine.Quit();
-        }
-
-        const int scale = 2; // pixel font scale
-
-        switch (currentPage) {
-
-        // ==================== MAIN MENU ====================
-        case Page::MainMenu: {
-            r->ClearScreen(14, 14, 30);
-
-            // Title bar
-            r->DrawRect(0, 0, W, 75, 8, 8, 22);
-            r->DrawPixelText("OPEN RHYTHM ENGINE", CX - 110, 8, 255, 220, 80, 255, scale + 1);
-            r->DrawPixelText("v0.1.0", CX + 95, 28, 180, 180, 200, 255, scale);
-
-            // Menu items
-            const char* labels[3] = { "[ Play ]", "[ Settings ]", "[ Quit ]" };
-            int colors[3][3] = {{40,140,220},{80,80,180},{200,60,60}};
-            int startY = 160;
-            for (int i = 0; i < 3; ++i) {
-                int y = startY + i * 80;
-                // Button background
-                int bx = CX - 160;
-                if (menuSel == i) {
-                    r->DrawRect(bx - 3, y - 3, 326, 56, 255, 200, 60, 200);
-                    r->DrawRect(bx, y, 320, 50, colors[i][0] + 40, colors[i][1] + 30, colors[i][2] + 20, 255);
-                } else {
-                    r->DrawRect(bx, y, 320, 50, colors[i][0], colors[i][1], colors[i][2], 200);
-                }
-                r->DrawPixelText(labels[i], CX - 40, y + 10, 255, 255, 255, 255, scale + 1);
-            }
-
-            // Info tips
-            r->DrawPixelText("ARROWS: Select   ENTER: Confirm   ESC: Quit", CX - 180, 560, 180, 180, 200, 255, scale);
-            break;
-        }
-
-        // ==================== SETTINGS ====================
-        case Page::Settings: {
-            r->ClearScreen(14, 14, 30);
-            r->DrawRect(0, 0, W, 55, 8, 8, 22);
-            r->DrawPixelText("SETTINGS", CX - 45, 8, 255, 200, 60, 255, scale + 1);
-
-            int y0 = 80;
-            int rowH = 38;
-            int maxS = 1 + keyCache.laneCount + 1;
-            SETTING_BACK_IDX = maxS - 1;
-
-            // Lane count row
-            {
-                bool sel = (settingSel == SETTING_LANE_IDX);
-                r->DrawRect(60, y0, 340, rowH, sel ? 50 : 25, sel ? 90 : 50, sel ? 150 : 80, 200);
-                if (sel) r->DrawRect(58, y0 - 2, 344, rowH + 4, 255, 200, 60, 180);
-
-                char buf[64];
-                snprintf(buf, sizeof(buf), "Lane Count: %dK  [<] [>]", keyCache.laneCount);
-                r->DrawPixelText(buf, 70, y0 + 8, 255, 255, 255, 255, scale);
-            }
-            y0 += rowH + 8;
-
-            // Key binding rows
-            for (int i = 0; i < keyCache.laneCount; ++i) {
-                bool sel = (settingSel == SETTING_KEY_START + i);
-                r->DrawRect(60, y0, 340, rowH, sel ? 40 : 20, sel ? 40 : 25, sel ? 70 : 40, 200);
-                if (sel) r->DrawRect(58, y0 - 2, 344, rowH + 4, 255, 200, 60, 180);
-
-                char buf[64];
-                const char* kn = ScancodeToName(keyCache.laneKeys[i]);
-                if (waitingForKey && waitingLane == i)
-                    snprintf(buf, sizeof(buf), "Lane %d: [Press any key...]", i);
-                else
-                    snprintf(buf, sizeof(buf), "Lane %d: %s", i, kn);
-                r->DrawPixelText(buf, 70, y0 + 8, 255, 255, 255, 255, scale);
-                y0 += rowH + 4;
-            }
-
-            // Back button
-            {
-                bool sel = (settingSel == SETTING_BACK_IDX);
-                r->DrawRect(60, y0 + 6, 340, rowH, sel ? 80 : 50, sel ? 40 : 30, sel ? 40 : 25, 200);
-                if (sel) r->DrawRect(58, y0 + 4, 344, rowH + 4, 255, 200, 60, 180);
-                r->DrawPixelText("[ Back to Menu ]", 130, y0 + 14, 255, 200, 180, 255, scale);
-            }
-
-            // Help text (right side)
-            r->DrawRect(470, 80, W - 490, 350, 18, 18, 36, 180);
-            r->DrawPixelText("CONTROLS:", 490, 95, 255, 220, 100, 255, scale);
-            r->DrawPixelText("UP/DOWN: Navigate", 490, 130, 200, 200, 220, 255, scale);
-            r->DrawPixelText("LEFT/RIGHT: Change lanes", 490, 160, 200, 200, 220, 255, scale);
-            r->DrawPixelText("ENTER: Select / Set key", 490, 190, 200, 200, 220, 255, scale);
-            r->DrawPixelText("Press new key (A-Z) to assign", 490, 220, 200, 200, 220, 255, scale);
-            r->DrawPixelText("ESC: Cancel key wait", 490, 250, 200, 200, 220, 255, scale);
-            r->DrawPixelText("BACKSPACE: Return to menu", 490, 280, 200, 200, 220, 255, scale);
-            r->DrawPixelText("Default: A-S-D-F-G-H-J-K", 490, 320, 180, 180, 200, 255, scale);
-            break;
-        }
-
-        // ==================== PLAY ====================
-        case Page::Play: {
-            r->ClearScreen(14, 14, 26);
-
-            int lc = keyCache.laneCount;
-            int lw = 90;
-            int lh = 200;
-            int lsY = 420;
-            int jlY = lsY - 2;
-            int sX = CX - (lc * lw) / 2;
-
-            // Top bar
-            r->DrawRect(0, 0, W, 60, 8, 8, 20);
-            r->DrawPixelText("PLAY MODE", CX - 50, 8, 255, 200, 60, 255, scale + 1);
-            r->DrawPixelText("ESC to return", CX + 80, 30, 160, 160, 180, 255, scale - 1);
-
-            // Lanes
-            for (int i = 0; i < lc; ++i) {
-                int x = sX + i * lw;
-                bool flash = (elapsed - lanePress[i]) < flashDur;
-                Ore::GameAction a = static_cast<Ore::GameAction>(
-                    static_cast<int>(Ore::GameAction::Lane0) + i);
-                bool held = input->IsActionDown(a);
-
-                if (flash || held) {
-                    r->DrawRect(x, lsY, lw - 4, lh, 80, 55, 130);
-                    r->DrawRect(x, lsY, lw - 4, 5, 150, 110, 255);
-                    r->DrawRect(x, lsY + lh - 5, lw - 4, 5, 150, 110, 255);
-                } else {
-                    r->DrawRect(x, lsY, lw - 4, lh, 30, 30, 48);
-                }
-                // Separator
-                r->DrawRect(x + lw - 4, lsY, 2, lh, 45, 45, 68);
-
-                // Key label
-                int ly = lsY + lh + 8;
-                int llw = 60, llh = 28;
-                int llx = x + (lw - 4 - llw) / 2;
-                if (flash || held) {
-                    r->DrawRect(llx, ly, llw, llh, 120, 95, 190, 220);
-                } else {
-                    r->DrawRect(llx, ly, llw, llh, 40, 40, 65, 180);
-                }
-                const char* kn = ScancodeToName(keyCache.laneKeys[i]);
-                r->DrawPixelText(kn, llx + 10 + (strlen(kn) == 1 ? 4 : 0), ly + 4, 255, 255, 255, 255, scale);
-            }
-
-            // Judgment line
-            r->DrawRect(0, jlY - 1, W, 4, 255, 190, 50, 200);
-            r->DrawRect(0, jlY + 3, W, 2, 255, 90, 25, 80);
-
-            // Bottom bar
-            r->DrawRect(0, H - 40, W, 40, 6, 6, 16, 200);
-
-            // Chart info
-            if (demoChart) {
-                r->DrawRect(W - 260, 70, 245, 100, 14, 14, 28, 200);
-                char b1[64];
-                snprintf(b1, sizeof(b1), "Demo: %d notes", (int)demoChart->notes.size());
-                r->DrawPixelText(b1, W - 250, 78, 220, 220, 255, 255, scale);
-                snprintf(b1, sizeof(b1), "BPM: 120 | %dK", lc);
-                r->DrawPixelText(b1, W - 250, 108, 200, 200, 220, 255, scale);
-                r->DrawPixelText("Difficulty: Easy | Lv.1", W - 250, 138, 200, 200, 220, 255, scale);
-            }
-            break;
-        }
-        default: break;
-        }
-    });
-
-    // --- Startup info ---
-    std::cout << "\n========================================" << std::endl;
-    std::cout << "  Engine started!" << std::endl;
-    std::cout << "  Default keys (A-L row):";
-    for (int i = 0; i < 8; ++i)
-        std::cout << " " << ScancodeToName(keyCache.laneKeys[i]);
-    std::cout << std::endl;
-    std::cout << "========================================" << std::endl;
-
-    engine.Run();
-
-    demoChart.reset();
-    engine.Shutdown();
-    std::cout << "Open Rhythm Engine exited cleanly." << std::endl;
-    return 0;
-                {
-                    int x = leftCol;
-                    int boxW = 340;
-                    bool sel = (settingSelection == SETTING_BACK_IDX);
-                    DrawSettingOption(r, x, y + 10, boxW, rowH, 80, 50, 50, sel);
-                }
-
-                // 右侧帮助文字区域
-                r->DrawRect(rightCol, 100, 550, 300, 22, 22, 40, 150);
-                r->DrawRect(rightCol + 10, 110, 80, 30, 60, 60, 100, 200);
-                // 帮助: ↑↓ 导航, ←→ 切换轨道数, Enter 修改键位, Backspace 返回
-                r->DrawRect(winW - 100, winH - 30, 80, 25, 200, 150, 50, 200);
-
-                break;
-            }
-
-            // ====================================================
-            // 游玩页面渲染
-            // ====================================================
-            case Page::Play: {
-                r->ClearScreen(18, 18, 28);
-
-                int lc = keyCache.laneCount;
-                const int laneWidth = 90;
-                const int laneHeight = 220;
-                const int laneStartY = 440;
-                const int judgeLineY = laneStartY - 2;
-                const int startX = centerX - (lc * laneWidth) / 2;
-
-                // 顶部栏
-                r->DrawRect(0, 0, winW, 70, 12, 12, 22);
-
-                // 绘制轨道
-                for (int i = 0; i < lc; ++i) {
-                    int x = startX + i * laneWidth;
-                    bool flashed = (elapsedTime - lanePressTime[i]) < pressFlashDuration;
-                    Ore::GameAction action = static_cast<Ore::GameAction>(
-                        static_cast<int>(Ore::GameAction::Lane0) + i);
-                    bool held = input->IsActionDown(action);
-
-                    if (flashed || held) {
-                        // 按下高亮
-                        r->DrawRect(x, laneStartY, laneWidth - 4, laneHeight, 80, 60, 140);
-                        r->DrawRect(x, laneStartY, laneWidth - 4, 6, 150, 120, 255);
-                        r->DrawRect(x, laneStartY + laneHeight - 6, laneWidth - 4, 6, 150, 120, 255);
-                        r->DrawRect(x + 4, laneStartY + 6, laneWidth - 12, laneHeight - 12,
-                                    30, 20, 60, 120);
-                    } else {
-                        r->DrawRect(x, laneStartY, laneWidth - 4, laneHeight, 35, 35, 55);
-                        r->DrawRect(x, laneStartY, laneWidth - 4, 2, 60, 60, 90);
-                    }
-                    // 分隔线
-                    r->DrawRect(x + laneWidth - 4, laneStartY, 2, laneHeight, 50, 50, 75);
-
-                    // 按键标签
-                    int labelY = laneStartY + laneHeight + 8;
-                    int labelW = 60;
-                    int labelH = 30;
-                    int labelX = x + (laneWidth - 4 - labelW) / 2;
-                    if (flashed || held) {
-                        r->DrawRect(labelX, labelY, labelW, labelH, 120, 100, 200, 220);
-                    } else {
-                        r->DrawRect(labelX, labelY, labelW, labelH, 45, 45, 70, 180);
-                    }
-                }
-
-                // 判定线
-                r->DrawRect(0, judgeLineY - 1, winW, 5, 255, 200, 60, 180);
-                r->DrawRect(0, judgeLineY + 4, winW, 2, 255, 100, 30, 80);
-
-                // 底部栏
-                r->DrawRect(0, winH - 45, winW, 45, 8, 8, 18, 200);
-
-                // 谱面信息
-                if (demoChart) {
-                    int infoX = winW - 280;
-                    r->DrawRect(infoX, 85, 265, 120, 15, 15, 30, 200);
-                }
-                break;
-            }
-
-            default: break;
-        }
-    });
-
-    // ======== 输出启动信息 ========
-    std::cout << "\n========================================" << std::endl;
-    std::cout << "  引擎已启动!" << std::endl;
-    std::cout << "  默认键位 (A-L行):";
-    for (int i = 0; i < 8; ++i) {
-        std::cout << " " << ScancodeToName(keyCache.laneKeys[i]);
-    }
-    std::cout << std::endl;
-    std::cout << "========================================" << std::endl;
-
-    // ======== Run ========
-    engine.Run();
-
-    // ======== Shutdown ========
-    demoChart.reset();
-    engine.Shutdown();
-    std::cout << "Open Rhythm Engine exited cleanly." << std::endl;
-    return 0;
+static int NW(const Ore::ChartNote& n){auto it=n.extras.find("weight");return it!=n.extras.end()?std::stoi(it->second):1;}
+struct JNote{double t;int l,w;Ore::NoteType ty;double d;bool j;};
+
+// =================================================================
+int main(int,char**){
+    std::cout<<"Open Rhythm Engine v0.2.0"<<std::endl;
+    fs::path root=fs::current_path();
+    {bool ok=false;std::string sp[]={".","..","../.."};for(auto& r:sp){if(fs::exists(root/r/"Charts")){root=fs::absolute(root/r);ok=true;break;}}if(!ok)root=fs::current_path();}
+    fs::current_path(root);std::cout<<"Root: "<<root.string()<<std::endl;
+    Ore::EngineConfig cfg;cfg.windowTitle="ORE v0.2.0";cfg.windowWidth=1280;cfg.windowHeight=720;
+    Ore::Engine engine(cfg);if(!engine.Initialize()){std::cerr<<"Init fail"<<std::endl;return-1;}
+    engine.GetResourceManager()->SetAssetRoot(root.string());
+    auto*rdr=engine.GetRenderer();auto*inp=engine.GetInput();auto*cload=engine.GetChartLoader();
+
+    if(TTF_Init()==0){const char*fs[]={"C:/Windows/Fonts/simhei.ttf","C:/Windows/Fonts/simsun.ttc","C:/Windows/Fonts/msyh.ttc","C:/Windows/Fonts/msyhbd.ttc","C:/Windows/Fonts/arial.ttf",nullptr};for(int i=0;fs[i];++i){ttfFont=TTF_OpenFont(fs[i],24);if(ttfFont){ttfOk=true;std::cout<<"TTF: "<<fs[i]<<std::endl;break;}}}
+    if(!ttfOk)std::cout<<"Pixel fallback."<<std::endl;
+
+    // ---- 8 beep sounds: do-re-mi-fa-so-la-ti-do ----
+    float freqs[8]={262.0f,294.0f,330.0f,349.0f,392.0f,440.0f,494.0f,523.0f};
+    Mix_Chunk* beeps[8]={nullptr};Uint8 beepData[8][6000*2]; // 6000 samples per beep, 16bit mono
+    for(int i=0;i<8;++i){auto* buf=(Sint16*)beepData[i];int ns=6000;
+        for(int j=0;j<ns;++j){float t=(float)j/44100.0f;float env=1.0f-(float)j/ns;buf[j]=(Sint16)(sin(2.0*3.14159265*freqs[i]*t)*env*8000);}
+        beeps[i]=Mix_QuickLoad_RAW(beepData[i],ns*2);}
+
+    Page cur=Page::MainMenu,nx=Page::MainMenu;KB kb;kb.D();int ms=0;const int MI=3;int ss=0,SL=0,SK=1,SB=1;bool wk=false;int wL=-1;
+    std::unique_ptr<Ore::Chart> chart;double lprs[8]={-10,-10,-10,-10,-10,-10,-10,-10},el=0,psT=0,tt=0;
+    Ore::Judge judge;std::vector<JNote> jn;Ore::Judgment lj=Ore::Judgment::Miss;double jf=-10;
+    struct SCORE{int p=0,gr=0,go=0,mi=0,tot=0,com=0,mx=0,ts=0;void R(){p=gr=go=mi=tot=com=mx=ts=0;}void H(Ore::Judgment j,int w){if(j==Ore::Judgment::Perfect){p++;com++;ts+=100*w;}else if(j==Ore::Judgment::Great){gr++;com++;ts+=80*w;}else if(j==Ore::Judgment::Good){go++;com++;ts+=60*w;}else{mi++;com=0;}if(com>mx)mx=com;}double A(){return tot==0?0:(p*1.0+gr*0.8+go*0.6)/tot*100;}}sc;
+    std::vector<std::string> cfs=SC();int cs=0;bool rdy=false;AK(inp,kb);
+
+    engine.GetGameLoop()->SetOnUpdate([&](double dt){tt+=dt;
+        if(inp->IsActionPressed(Ore::GameAction::Pause)&&tt-psT>0.3){switch(cur){case Page::MainMenu:nx=Page::Quit;break;default:nx=Page::MainMenu;psT=tt;break;}}
+        bool cf=inp->IsActionPressed(Ore::GameAction::Confirm)||inp->IsKeyPressed(SDL_SCANCODE_RETURN);bool pr=(tt-psT)>0.25;
+        switch(cur){
+        case Page::MainMenu:if(inp->IsKeyPressed(SDL_SCANCODE_UP))ms=(ms-1+MI)%MI;if(inp->IsKeyPressed(SDL_SCANCODE_DOWN))ms=(ms+1)%MI;if(cf&&pr){psT=tt;if(ms==0){cfs=SC();cs=0;nx=Page::ChartSelect;}else if(ms==1){ss=0;wk=false;nx=Page::Settings;}else nx=Page::Quit;}break;
+        case Page::Settings:{if(wk){for(int k=SDL_SCANCODE_A;k<=SDL_SCANCODE_Z;++k)if(inp->IsKeyPressed((SDL_Scancode)k)){int oc=kb.F((SDL_Scancode)k);if(oc>=0&&oc!=wL)kb.k[oc]=kb.k[wL];kb.k[wL]=(SDL_Scancode)k;AK(inp,kb);wk=false;wL=-1;break;}if(inp->IsKeyPressed(SDL_SCANCODE_ESCAPE)){wk=false;wL=-1;}break;}int mx=1+kb.n+1;SB=mx-1;if(inp->IsKeyPressed(SDL_SCANCODE_UP))ss=(ss-1+mx)%mx;if(inp->IsKeyPressed(SDL_SCANCODE_DOWN))ss=(ss+1)%mx;if(ss==SL){if(inp->IsKeyPressed(SDL_SCANCODE_LEFT)){kb.n=std::max(2,kb.n-1);AK(inp,kb);}if(inp->IsKeyPressed(SDL_SCANCODE_RIGHT)){kb.n=std::min(8,kb.n+1);AK(inp,kb);}}if(cf&&pr){if(ss==SB){nx=Page::MainMenu;psT=tt;}else if(ss>=SK&&ss<SK+kb.n){wk=true;wL=ss-SK;}}if(inp->IsKeyPressed(SDL_SCANCODE_BACKSPACE)&&pr){nx=Page::MainMenu;psT=tt;}}break;
+        case Page::ChartSelect:if(inp->IsKeyPressed(SDL_SCANCODE_UP))cs=std::max(0,cs-1);if(inp->IsKeyPressed(SDL_SCANCODE_DOWN))cs=std::min((int)cfs.size()-1,cs+1);if(cf&&pr&&!cfs.empty()){psT=tt;std::string cp="Charts/"+cfs[cs];chart=nullptr;if(cfs[cs].find(".mdc")!=std::string::npos)chart=ParseMdc(cp);else chart=cload->LoadChart(cp);if(chart){kb.n=chart->laneCount;AK(inp,kb);jn.clear();sc.R();for(auto&n:chart->notes){jn.push_back({n.timestamp,n.lane,NW(n),n.type,n.duration,false});sc.tot++;}el=0;rdy=false;nx=Page::Play;}else std::cout<<"[Err] "<<cp<<std::endl;}break;
+        case Page::Play:if(rdy){if(cf&&pr){nx=Page::Results;psT=tt;}break;}el+=dt;{int lc=kb.n;for(int i=0;i<lc;++i){Ore::GameAction a=static_cast<Ore::GameAction>(static_cast<int>(Ore::GameAction::Lane0)+i);if(inp->IsActionPressed(a)){lprs[i]=el;double bd=999;int bi=-1;for(int ni=0;ni<(int)jn.size();++ni){if(jn[ni].j||jn[ni].l!=i)continue;double d2=std::abs(el-jn[ni].t);if(d2<bd&&d2<0.15){bd=d2;bi=ni;}}if(bi>=0){double delta=el-jn[bi].t;Ore::Judgment j=judge.JudgeHit(delta);jn[bi].j=true;sc.H(j,jn[bi].w);lj=j;jf=el;if(beeps[i])Mix_PlayChannel(-1,beeps[i],0);}}}for(int ni=0;ni<(int)jn.size();++ni){if(!jn[ni].j&&el-jn[ni].t>0.15){jn[ni].j=true;sc.H(Ore::Judgment::Miss,jn[ni].w);lj=Ore::Judgment::Miss;jf=el;}}if(sc.p+sc.gr+sc.go+sc.mi>=sc.tot&&sc.tot>0)rdy=true;}break;
+        case Page::Results:if(cf&&pr){nx=Page::ChartSelect;psT=tt;}break;default:break;}});
+
+    engine.GetGameLoop()->SetOnRender([&](double){Ore::Renderer*r=rdr;int W=cfg.windowWidth,H=cfg.windowHeight,CX=W/2;
+        if(nx!=cur){cur=nx;if(cur==Page::Play)el=0;if(cur==Page::Quit)engine.Quit();}char b[256];
+        switch(cur){
+        case Page::MainMenu:r->ClearScreen(14,14,30);r->DrawRect(0,0,W,75,8,8,22);DT(r,"Open Rhythm Engine",20,10,255,220,80,255);DT(r,"v0.2.0",20,35,180,180,200,255);{const char*ls[3]={"开始游戏","设置","退出"};int cs[3][3]={{40,140,220},{80,80,180},{200,60,60}};for(int i=0;i<3;++i){int y=150+i*90,bx=CX-160;if(ms==i){r->DrawRect(bx-3,y-3,326,56,255,200,60,200);r->DrawRect(bx,y,320,50,cs[i][0]+40,cs[i][1]+30,cs[i][2]+20,255);}else r->DrawRect(bx,y,320,50,cs[i][0],cs[i][1],cs[i][2],200);DT(r,ls[i],CX-30,y+10,255,255,255,255);}}DT(r,"UP/DOWN:选择  ENTER:确认  ESC:退出",CX-150,600,160,160,200,255);break;
+        case Page::Settings:r->ClearScreen(14,14,30);r->DrawRect(0,0,W,55,8,8,22);DT(r,"设置",20,10,255,200,60,255);{int y0=80,rh=38,mx=1+kb.n+1;SB=mx-1;{bool sl=(ss==SL);r->DrawRect(40,y0,320,rh,sl?50:25,sl?90:50,sl?150:80,200);if(sl)r->DrawRect(38,y0-2,324,rh+4,255,200,60,180);snprintf(b,sizeof(b),"轨道数: %dK  [<] [>]",kb.n);DT(r,b,50,y0+6,255,255,255,255);}y0+=rh+8;for(int i=0;i<kb.n;++i){bool sl=(ss==SK+i);r->DrawRect(40,y0,320,rh,sl?40:20,sl?40:25,sl?70:40,200);if(sl)r->DrawRect(38,y0-2,324,rh+4,255,200,60,180);snprintf(b,sizeof(b),wk&&wL==i?"轨道 %d: [按任意键...]":"轨道 %d: %s",i,KN(kb.k[i]));DT(r,b,50,y0+6,255,255,255,255);y0+=rh+4;}{bool sl=(ss==SB);r->DrawRect(40,y0+6,320,rh,sl?80:50,sl?40:30,sl?40:25,200);if(sl)r->DrawRect(38,y0+4,324,rh+4,255,200,60,180);DT(r,"[ 返回主菜单 ]",100,y0+12,255,200,180,255);}}r->DrawRect(420,80,W-440,400,18,18,36,180);DT(r,"操作说明:",430,90,255,220,100,255);DT(r,"UP/DOWN: 导航",430,120,200,200,220,255);DT(r,"LEFT/RIGHT: 切换轨道数",430,148,200,200,220,255);break;
+        case Page::ChartSelect:r->ClearScreen(14,14,30);r->DrawRect(0,0,W,55,8,8,22);DT(r,"选择谱面",20,10,255,200,60,255);if(cfs.empty()){DT(r,"Charts/ 中没有谱面文件",CX-120,250,255,100,100,255);}else{int st=std::max(0,std::min(cs-5,(int)cfs.size()-11));for(int i=st;i<std::min((int)cfs.size(),st+11);++i){int y=80+(i-st)*50;bool sl=(i==cs);r->DrawRect(40,y,600,40,sl?50:20,sl?90:40,sl?150:70,200);if(sl)r->DrawRect(38,y-2,604,44,255,200,60,180);DT(r,cfs[i],50,y+6,255,255,255,255);}}DT(r,"ENTER:选择  ESC:返回",W-350,H-30,160,160,200,255);break;
+        case Page::Play:r->ClearScreen(14,14,26);if(rdy){r->ClearScreen(14,14,28);DT(r,"谱面完成!",CX-60,200,255,255,100,255);snprintf(b,sizeof(b),"总分: %d",sc.ts);DT(r,b,CX-80,260,255,255,255,255);DT(r,"按 ENTER 查看详情",CX-80,320,200,200,220,255);break;}
+            {int lc=kb.n,lw=90,lh=200,lsY=420;float sp=300;r->DrawRect(0,0,W,60,8,8,20);DT(r,"PLAY MODE",10,6,255,200,60,255);DT(r,"ESC返回",10,30,160,160,180,255);int sX=CX-(lc*lw)/2;for(int i=0;i<lc;++i){int x=sX+i*lw;r->DrawRect(x,lsY,lw-4,lh,30,30,48);r->DrawRect(x+lw-4,lsY,2,lh,45,45,68);int llw=60,llh=28,llx=x+(lw-4-llw)/2,ly=lsY+lh+8;r->DrawRect(llx,ly,llw,llh,40,40,65,180);DT(r,KN(kb.k[i]),llx+14,ly+4,255,255,255,255);}r->DrawRect(0,lsY-2,W,4,255,190,50,200);r->DrawRect(0,lsY+2,W,2,255,90,25,80);
+            if(chart){for(auto&n:jn){if(n.j)continue;double dt=n.t-el;float ny=lsY-(float)(dt*sp);if(ny<-50||ny>lsY+600)continue;int nx=sX+n.l*lw+4,nw=lw-12,nh=16;if(n.ty==Ore::NoteType::Hold)nh=(int)(n.d*sp);if(nh<16)nh=16;int cR=220,cG=220,cB=60;if(n.w>=3){cR=255;cG=80;cB=80;}if(n.ty==Ore::NoteType::Hold){cG=140;cB=220;}r->DrawRect(nx,(int)ny,nw,nh,cR,cG,cB,220);}}
+            if(el-jf<0.6){uint8_t jr=255,jg=255,jb=255;if(lj==Ore::Judgment::Perfect){jr=255;jg=220;jb=60;}else if(lj==Ore::Judgment::Great){jr=100;jg=255;jb=100;}else if(lj==Ore::Judgment::Good){jr=100;jg=180;jb=255;}else{jr=255;jg=80;jb=80;}DT(r,JS(lj),W-160,10,jr,jg,jb,255);}{snprintf(b,sizeof(b),"进度: %d/%d",sc.p+sc.gr+sc.go+sc.mi,sc.tot);DT(r,b,W-240,55,200,200,220,255);snprintf(b,sizeof(b),"得分: %d",sc.ts);DT(r,b,W-240,75,220,220,100,255);}if(chart){snprintf(b,sizeof(b),"%s (%dK)",chart->metadata.title.c_str(),lc);DT(r,b,10,H-30,160,160,180,255);}}break;
+        case Page::Results:r->ClearScreen(14,14,30);r->DrawRect(0,0,W,65,8,8,22);DT(r,"结算",20,12,255,200,60,255);{int x=80,y=100;snprintf(b,sizeof(b),"谱面: %s",chart?chart->metadata.title.c_str():"?");DT(r,b,x,y,255,255,255,255);y+=35;snprintf(b,sizeof(b),"Perfect: %d",sc.p);DT(r,b,x,y,255,220,60,255);y+=30;snprintf(b,sizeof(b),"Great:   %d",sc.gr);DT(r,b,x,y,100,255,100,255);y+=30;snprintf(b,sizeof(b),"Good:    %d",sc.go);DT(r,b,x,y,100,180,255,255);y+=30;snprintf(b,sizeof(b),"Miss:    %d",sc.mi);DT(r,b,x,y,255,80,80,255);y+=35;snprintf(b,sizeof(b),"总分: %d  连击: %d",sc.ts,sc.mx);DT(r,b,x,y,255,255,100,255);y+=35;double ac=sc.A();const char*gd="D";if(ac>=100)gd="SS";else if(ac>=95)gd="S";else if(ac>=90)gd="A";else if(ac>=80)gd="B";else if(ac>=65)gd="C";snprintf(b,sizeof(b),"精度: %.1f%%  评级: %s",ac,gd);DT(r,b,x,y,255,255,255,255);}DT(r,"按 ENTER 返回",CX-60,H-40,180,180,200,255);break;
+        default:break;}});
+
+    std::cout<<"\nStarted."<<std::endl;engine.Run();chart.reset();engine.Shutdown();
+    if(ttfFont){TTF_CloseFont(ttfFont);ttfFont=nullptr;}TTF_Quit();
+    for(int i=0;i<8;++i){if(beeps[i])Mix_FreeChunk(beeps[i]);}
+    std::cout<<"Exit."<<std::endl;return 0;
 }
